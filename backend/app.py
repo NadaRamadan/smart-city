@@ -38,6 +38,39 @@ async def detect(
     lng: float = Form(...),
     reporter: str = Form(default="anonymous")
 ):
+    try:
+        path, file_id = await save_image(file)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        result = predict(path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Inference error: {str(e)}")
+
+    # Clean detections for MongoDB (only store simple types)
+    clean_detections = [
+        {
+            "type": str(d["type"]),
+            "confidence": float(d["confidence"]),
+        }
+        for d in result.get("all_detections", [])
+    ]
+
+    data = {
+        "file_id": file_id,
+        "type": str(result["type"]),
+        "confidence": float(result["confidence"]),
+        "all_detections": clean_detections,
+        "lat": float(lat),
+        "lng": float(lng),
+        "reporter": str(reporter),
+    }
+
+    insert_report(data)
+    return data
     """
     Upload an image to detect urban issues (garbage, pollution, smoke).
     Returns the detected type, confidence score, and stores the report.

@@ -1,62 +1,50 @@
 from ultralytics import YOLO
 import os
-import threading
 
-MODEL_PATH = os.getenv("MODEL_PATH", "best.pt")
+_models = {}
 
-_model = None
-_lock = threading.Lock()
-
-def get_model():
-    global _model
-    if _model is None:
-        with _lock:
-            if _model is None:
-                if not os.path.exists(MODEL_PATH):
-                    raise FileNotFoundError(
-                        f"Model file '{MODEL_PATH}' not found. "
-                        "Train your model first: see ai/train.py"
-                    )
-                _model = YOLO(MODEL_PATH)
-    return _model
-
+def load_models():
+    global _models
+    model_files = {
+        "garbage":   "garbage.pt",
+        "smoke":     "smoke.pt",
+        "pollution": "pollution.pt",
+    }
+    for label, filename in model_files.items():
+        if label not in _models:
+            if not os.path.exists(filename):
+                print(f"WARNING: {filename} not found, skipping {label} detection")
+                continue
+            _models[label] = YOLO(filename)
+    return _models
 
 def predict(image_path: str) -> dict:
-    if not os.path.exists(image_path):
-        raise FileNotFoundError(f"Image not found: {image_path}")
+    models = load_models()
 
-    model = get_model()
-    results = model.predict(source=image_path, verbose=False)
+    if not models:
+        raise FileNotFoundError("No models found. Add garbage.pt, smoke.pt or pollution.pt to backend folder")
 
-    detections = []
+    all_detections = []
 
-    for r in results:
-        for box in r.boxes:
-            cls = int(box.cls.item() if hasattr(box.cls, "item") else box.cls)
-            conf = float(box.conf.item() if hasattr(box.conf, "item") else box.conf)
-            label = model.names[cls]
+    for label, model in models.items():
+        try:
+            results = model(image_path, verbose=False)
+            for r in results:
+                for box in r.boxes:
+                    conf = float(box.conf[0])
+                    if conf > 0.3:  # ignore very low confidence
+                        all_detections.append({
+                            "type": label,
+                            "confidence": round(conf, 4),
+                            "bbox": [round(x) for x in box.xyxy[0].tolist()]
+                        })
+        except Exception as e:
+            print(f"Error running {label} model: {e}")
+            continue
 
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
+    if not all_detections:
+        return {"type": "clean", "confidence": 0.99, "all_detections": []}
 
-            detections.append({
-                "type": label,
-                "confidence": round(conf, 4),
-                "bbox": [round(x1), round(y1), round(x2), round(y2)]
-            })
-
-    if not detections:
-        return {
-            "type": "clean",
-            "confidence": 0.99,
-            "bbox": None,
-            "all_detections": []
-        }
-
-    best = max(detections, key=lambda x: x["confidence"])
-
-    return {
-        "type": best["type"],
-        "confidence": best["confidence"],
-        "bbox": best["bbox"],
-        "all_detections": detections
-    }
+    best = max(all_detections, key=lambda x: x["confidence"])
+    best["all_detections"] = all_detections
+    return best

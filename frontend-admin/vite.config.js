@@ -9,6 +9,10 @@ export default defineConfig({
       '/reports': 'http://localhost:8000',
       '/stats': 'http://localhost:8000',
       '/uploads': 'http://localhost:8000',
-    }
+    },
+     host: true,
+    strictPort: true,
+    allowedHosts: true
+
   }
 })
